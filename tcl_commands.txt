@@ -1,0 +1,48 @@
+# swap_watcher.tcl — polls swap_level via VIO, loads matching partial bitstream on change
+
+# ---- EDIT THESE FOR YOUR PROJECT ----
+set BIT_2X2 "/path_to_bitstream/inst_rp_matrix_rm_2x2_partial.bit"
+set BIT_3X3 "/path_to_bitstream/inst_rp_matrix_rm_3x3_partial.bit"
+set POLL_INTERVAL_MS 200
+# --------------------------------------
+
+open_hw_manager
+connect_hw_server
+open_hw_target
+
+set dev [lindex [get_hw_devices] 0]
+current_hw_device $dev
+refresh_hw_device -update_hw_probes true $dev
+
+set vio [lindex [get_hw_vios -of_objects $dev] 0]
+if {$vio eq ""} { puts "ERROR: no VIO core found - is the design running?"; return }
+
+set probe [get_hw_probes swap_level -of_objects $vio]
+
+refresh_hw_vio $vio
+set last_val [get_property INPUT_VALUE $probe]
+puts "Watcher started. Initial swap_level = $last_val"
+
+while {1} {
+    refresh_hw_vio $vio
+    set val [get_property INPUT_VALUE $probe]
+    if {$val ne $last_val} {
+        puts "swap_level: $last_val -> $val"
+        if {$val == 1} {
+            puts "Loading 3x3 partial..."
+            set_property PROGRAM.FILE $BIT_3X3 $dev
+        } else {
+            puts "Loading 2x2 partial..."
+            set_property PROGRAM.FILE $BIT_2X2 $dev
+        }
+        program_hw_devices $dev
+        # re-discover vio/probe — old handles go stale after reprogramming
+        refresh_hw_device -update_hw_probes true $dev
+        set vio [lindex [get_hw_vios -of_objects $dev] 0]
+        set probe [get_hw_probes swap_level -of_objects $vio]
+        refresh_hw_vio $vio
+        puts "Done."
+        set last_val $val
+    }
+    after $POLL_INTERVAL_MS
+}
